@@ -1,42 +1,57 @@
 require('dotenv').config();
 const { Pool } = require('pg');
 const { parse } = require('pg-connection-string');
+const dns = require('dns').promises;
 
-const url =
-  process.env.DATABASE_URL_DIRECT ||     // Actions(Direct 용)
-  process.env.DATABASE_POOL_URL ||       // 로컬에서 기존 Pooler 쓰던 경우
-  process.env.DATABASE_URL;              // 기타
+// IPv4 우선(가능한 환경에서 기본 해석 순서 보정)
+try { require('dns').setDefaultResultOrder('ipv4first'); } catch {}
 
-if (!url) {
-  console.error('Missing env: DATABASE_URL_DIRECT / DATABASE_POOL_URL / DATABASE_URL');
-  process.exit(1);
-}
+async function createPoolFromEnv() {
+  const url =
+    process.env.DATABASE_URL_DIRECT ||     // Actions(Direct)
+    process.env.DATABASE_POOL_URL ||       // 로컬에서 풀러 테스트할 때만
+    process.env.DATABASE_URL;              // 기타
 
-const cfg = parse(url);
-const host = (cfg.host || '').toLowerCase();
-const isPooler = host.includes('.pooler.supabase.com');
-const isDirect = host.endsWith('.supabase.co');
+  if (!url) throw new Error('Missing DB URL env');
 
-let ssl;
-if (isDirect) {
-  // Direct(5432) → Supabase CA로 엄격 검증
-  const ca = process.env.SUPABASE_CA;
-  if (!ca) {
-    console.error('SUPABASE_CA missing for direct connection');
-    process.exit(1);
+  const cfg = parse(url);
+  const host = (cfg.host || '').toLowerCase();
+  const isDirect = host.endsWith('.supabase.co');
+  const isPooler = host.includes('.pooler.supabase.com');
+
+  if (isDirect) {
+    // 1) IPv4 주소로 강제
+    const A = await dns.resolve4(host);
+    if (!A || !A.length) throw new Error('No IPv4 A record for ' + host);
+    const ipv4 = A[0];
+
+    // 2) Direct는 반드시 CA로 검증
+    // 로컬에서만 파일fallback이 필요하면 아래 두 줄을 쓰세요.
+    // const fs = require('fs');
+    // const ca = process.env.SUPABASE_CA || (fs.existsSync('./prod-ca-2021.crt') ? fs.readFileSync('./prod-ca-2021.crt','utf8') : undefined);
+    const ca = process.env.SUPABASE_CA;
+    if (!ca) throw new Error('SUPABASE_CA missing for direct');
+
+    return new Pool({
+      host: ipv4,
+      port: Number(cfg.port || 5432),
+      user: cfg.user || 'postgres',
+      password: cfg.password,
+      database: cfg.database || 'postgres',
+      ssl: { ca },
+      keepAlive: true,
+    });
   }
-  ssl = { ca };
-} else if (isPooler) {
-  // Pooler(6543) → 시스템 CA(ssl:true) 또는 임시 우회(원하면)
-  ssl = true;
-} else {
-  // 기타 환경(진단용 우회, 필요시 제거)
-  ssl = { rejectUnauthorized: false };
+
+  // 풀러(필요할 때만)
+  return new Pool({
+    connectionString: url,
+    ssl: true,           // 시스템 CA 신뢰
+    keepAlive: true,
+  });
 }
 
-cfg.ssl = ssl;
-const pool = new Pool(cfg);
-// 이후 pool 사용…
+module.exports = { createPoolFromEnv };
 
 
 async function fetchTrendingKR(categoryId = 10) {
@@ -89,6 +104,7 @@ async function upsert(items) {
   console.log('Done');
 
 })();
+
 
 
 
