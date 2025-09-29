@@ -4,18 +4,20 @@
 require('dotenv').config();
 const { Pool } = require('pg');
 const { parse } = require('pg-connection-string');
-const fs = require('fs');
 
 const connStr = process.env.DATABASE_POOL_URL || process.env.DATABASE_URL;
-const config = parse(connStr);
+if (!connStr) { console.error('Missing env: DATABASE_POOL_URL'); process.exit(1); }
 
-// Supabase에서 다운로드한 CA 인증서 경로
-const ca = fs.readFileSync('./prod-ca-2021.crt').toString();
+const ca =
+  process.env.SUPABASE_CA ||
+  (process.env.SUPABASE_CA_B64
+    ? Buffer.from(process.env.SUPABASE_CA_B64, 'base64').toString('utf8')
+    : undefined);
 
-// TLS 검증을 CA로 하도록 설정(권장)
-config.ssl = { ca };
+const cfg = parse(connStr);
+cfg.ssl = ca ? { ca } : { rejectUnauthorized: false }; // 운영에선 ca가 들어오도록 세팅하고, 우회는 제거 권장
 
-const pool = new Pool(config);
+const pool = new Pool(cfg);
 
 
 async function fetchTrendingKR(categoryId = 10) {
@@ -66,4 +68,5 @@ async function upsert(items) {
   await upsert(items);
   await pool.end();
   console.log('Done');
+
 })();
