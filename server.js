@@ -1,13 +1,19 @@
 require('dotenv').config();
-const express = require('express');
 const { Pool } = require('pg');
 const { parse } = require('pg-connection-string');
-const fs = require('fs');
 
-const app = express();
 const connStr = process.env.DATABASE_POOL_URL || process.env.DATABASE_URL;
-const ca = fs.readFileSync('./prod-ca-2021.crt','utf8');
-const cfg = parse(connStr); cfg.ssl = { ca };
+if (!connStr) { console.error('Missing env: DATABASE_POOL_URL'); process.exit(1); }
+
+const ca =
+  process.env.SUPABASE_CA ||
+  (process.env.SUPABASE_CA_B64
+    ? Buffer.from(process.env.SUPABASE_CA_B64, 'base64').toString('utf8')
+    : undefined);
+
+const cfg = parse(connStr);
+cfg.ssl = ca ? { ca } : { rejectUnauthorized: false }; // 운영에선 ca가 들어오도록 세팅하고, 우회는 제거 권장
+
 const pool = new Pool(cfg);
 
 app.get('/api/top', async (req, res) => {
@@ -29,4 +35,5 @@ app.get('/api/top', async (req, res) => {
 });
 
 const port = process.env.PORT || 3000;
+
 app.listen(port, () => console.log('API on http://localhost:'+port));
