@@ -12,7 +12,7 @@ jobs:
         with: { node-version: 22, cache: 'npm' }
       - run: npm ci
       - name: Write Supabase CA cert
-        run: echo "${{ secrets.SUPABASE_CA }}" > prod-ca-2021.crt
+        run: printf "%s" "${{ secrets.SUPABASE_CA }}" > prod-ca-2021.crt
       - name: Run poller
         env:
           DATABASE_POOL_URL: ${{ secrets.DATABASE_POOL_URL }}
