@@ -2,82 +2,43 @@ name: Poll YouTube snapshots
 
 on:
   schedule:
-    - cron: "*/15 * * * *"   # 15분마다(UTC)
-  workflow_dispatch:          # 수동 실행 버튼
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
 
 jobs:
   poll:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      contents: read
-
-    # 모든 step에서 보이도록 시크릿을 job 레벨 env로 주입
+    permissions: { contents: read }
     env:
-      DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
+      DATABASE_POOL_URL: ${{ secrets.DATABASE_POOL_URL }}
       YT_API_KEY: ${{ secrets.YT_API_KEY }}
-      SUPABASE_CA: ${{ secrets.SUPABASE_CA }}
 
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
+        with: { node-version: 22, cache: 'npm' }
       - run: npm ci
 
-      # 수동 실행 때만 진단 출력
       - name: Debug (manual only)
         if: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
-          echo "DB URL len: ${#DATABASE_URL_DIRECT}"
-          node -e "const u=process.env.DATABASE_URL_DIRECT||''; console.log('DB host:', (u.match(/@([^:/?]+)/)||[])[1]||'EMPTY');"
-          echo "CA len: ${#SUPABASE_CA}"
+          echo "POOL URL len: ${#DATABASE_POOL_URL}"
+          node -e "const u=process.env.DATABASE_POOL_URL||''; console.log('DB host:', (u.match(/@([^:/?]+)/)||[])[1]||'EMPTY');"
 
-      - name: DB smoke test (force IPv4)
+      - name: DB smoke test (pooler, no-verify)
         run: |
           node - <<'NODE'
           const { Pool } = require('pg');
-          const { parse } = require('pg-connection-string');
-          const dns = require('dns').promises;
-
-          const url = process.env.DATABASE_URL_DIRECT;
-          if (!url) { console.error('DATABASE_URL_DIRECT missing'); process.exit(1); }
-
-          const cfg = parse(url);
-          const host = (cfg.host || '').toLowerCase();
-          console.log('DB host:', host);
-
-          // 1) A 레코드(IPv4) 직접 해석
+          const url = process.env.DATABASE_POOL_URL;
+          if (!url) { console.error('DATABASE_POOL_URL missing'); process.exit(1); }
           (async () => {
             try {
-              const A = await dns.resolve4(host);
-              if (!A || !A.length) throw new Error('No IPv4 A record for ' + host);
-              const ipv4 = A[0];
-              console.log('Use IPv4:', ipv4);
-
-              // 2) Direct + CA로 검증(연결 문자열 대신 개별 필드로 전달)
-              const ca = process.env.SUPABASE_CA;
-              if (!ca) { console.error('SUPABASE_CA missing'); process.exit(1); }
-
-              const pool = new Pool({
-                host: ipv4,
-                port: Number(cfg.port || 5432),
-                user: cfg.user || 'postgres',
-                password: cfg.password,
-                database: cfg.database || 'postgres',
-                ssl: { ca }
-              });
-
-              const r = await pool.query('select now()');
+              const p = new Pool({ connectionString: url, ssl: { rejectUnauthorized: false } });
+              const r = await p.query('select now()');
               console.log('DB now:', r.rows[0]);
-              await pool.end();
-            } catch (e) {
-              console.error(e);
-              process.exit(1);
-            }
+              await p.end();
+            } catch (e) { console.error(e); process.exit(1); }
           })();
           NODE
 
