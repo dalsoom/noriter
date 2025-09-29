@@ -2,22 +2,21 @@ require('dotenv').config();
 const { Pool } = require('pg');
 const { parse } = require('pg-connection-string');
 
-const connStr = process.env.DATABASE_POOL_URL || process.env.DATABASE_URL;
-if (!connStr) { console.error('Missing env: DATABASE_POOL_URL'); process.exit(1); }
+const url = process.env.DATABASE_POOL_URL || process.env.DATABASE_URL;
+if (!url) { console.error('Missing env: DATABASE_POOL_URL'); process.exit(1); }
 
-const cfg = parse(connStr);
-const host = (cfg.host || connStr.match(/@([^:/?]+)/)?.[1] || '').toLowerCase();
+const cfg = parse(url);
+const host = (cfg.host || '').toLowerCase();
 const isPooler = host.includes('.pooler.supabase.com');
 
-// 1) pooler일 땐 시스템 CA 사용(ssl: true). CA 지정하지 않음!
-const sslForPooler = true; // 또는 { rejectUnauthorized: true }
+let ssl;
+if (isPooler) ssl = true;                   // pooler는 시스템 CA 사용
+else {
+  const ca = process.env.SUPABASE_CA;       // direct일 때만 CA
+  ssl = ca ? { ca } : { rejectUnauthorized: false }; // 우회는 진단용
+}
 
-// 2) direct(db.<ref>.supabase.co)일 땐 Supabase CA 사용
-const ca = process.env.SUPABASE_CA; // PEM 전체(멀티라인)
-const sslForDirect = ca ? { ca } : { rejectUnauthorized: false }; // 진단용 우회 포함
-
-cfg.ssl = isPooler ? sslForPooler : sslForDirect;
-
+cfg.ssl = ssl;
 const pool = new Pool(cfg);
 
 
@@ -71,4 +70,5 @@ async function upsert(items) {
   console.log('Done');
 
 })();
+
 
