@@ -1,4 +1,5 @@
 name: Poll YouTube snapshots
+
 on:
   schedule:
     - cron: "*/15 * * * *"
@@ -7,29 +8,38 @@ on:
 jobs:
   poll:
     runs-on: ubuntu-latest
-    env:
+    env:                                  # ← 모든 step에서 보이게 전역 주입
       DATABASE_POOL_URL: ${{ secrets.DATABASE_POOL_URL }}
       YT_API_KEY: ${{ secrets.YT_API_KEY }}
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: 'npm' }
+        with:
+          node-version: 22
+          cache: 'npm'
+
       - run: npm ci
 
       - name: Write Supabase CA cert
         run: printf "%s" "${{ secrets.SUPABASE_CA }}" > prod-ca-2021.crt
 
-      - name: Debug cert header/footer and sizes (manual runs only)
+      # 수동 실행에서만 진단 정보 출력
+      - name: Debug env & cert (manual only)
         if: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           head -n 2 prod-ca-2021.crt || true
           tail -n 2 prod-ca-2021.crt || true
+          # 민감값은 길이만 확인
           echo "DB URL len: ${#DATABASE_POOL_URL}"
           echo "YT key len: ${#YT_API_KEY}"
+          # 호스트만 추출(비번/유저는 출력 안 함)
+          node -e "const u=process.env.DATABASE_POOL_URL||''; console.log('DB host:', (u.match(/@([^:/?]+)/)||[])[1]||'EMPTY');"
 
       - name: DB smoke test
         run: |
-          node -e "const {Pool}=require('pg');const fs=require('fs');const p=new Pool({connectionString:process.env.DATABASE_POOL_URL, ssl:{ca:fs.readFileSync('prod-ca-2021.crt','utf8')}});(async()=>{try{let r=await p.query('select now()');console.log(r.rows[0]);}catch(e){console.error(e);process.exit(1);}finally{await p.end();}})();"
+          node -e "const {Pool}=require('pg');const fs=require('fs');const p=new Pool({connectionString:process.env.DATABASE_POOL_URL, ssl:{ca:fs.readFileSync('prod-ca-2021.crt','utf8')}});(async()=>{try{let r=await p.query('select now()');console.log('DB now:', r.rows[0]);}catch(e){console.error(e);process.exit(1);}finally{await p.end();}})();"
 
       - name: Run poller
         run: node poll.js
