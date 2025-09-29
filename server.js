@@ -1,57 +1,36 @@
 require('dotenv').config();
 const { Pool } = require('pg');
 const { parse } = require('pg-connection-string');
-const dns = require('dns').promises;
 
-// IPv4 우선(가능한 환경에서 기본 해석 순서 보정)
-try { require('dns').setDefaultResultOrder('ipv4first'); } catch {}
-
-async function createPoolFromEnv() {
+function createPool() {
   const url =
-    process.env.DATABASE_URL_DIRECT ||     // Actions(Direct)
-    process.env.DATABASE_POOL_URL ||       // 로컬에서 풀러 테스트할 때만
-    process.env.DATABASE_URL;              // 기타
+    process.env.DATABASE_POOL_URL ||
+    process.env.DATABASE_URL_DIRECT ||
+    process.env.DATABASE_URL;
 
   if (!url) throw new Error('Missing DB URL env');
 
   const cfg = parse(url);
   const host = (cfg.host || '').toLowerCase();
-  const isDirect = host.endsWith('.supabase.co');
   const isPooler = host.includes('.pooler.supabase.com');
+  const isDirect = host.endsWith('.supabase.co');
 
-  if (isDirect) {
-    // 1) IPv4 주소로 강제
-    const A = await dns.resolve4(host);
-    if (!A || !A.length) throw new Error('No IPv4 A record for ' + host);
-    const ipv4 = A[0];
-
-    // 2) Direct는 반드시 CA로 검증
-    // 로컬에서만 파일fallback이 필요하면 아래 두 줄을 쓰세요.
-    // const fs = require('fs');
-    // const ca = process.env.SUPABASE_CA || (fs.existsSync('./prod-ca-2021.crt') ? fs.readFileSync('./prod-ca-2021.crt','utf8') : undefined);
+  let ssl;
+  if (isPooler) {
+    // GH Runner에서는 체인이 안 맞는 케이스가 있어 검증 임시 우회
+    ssl = { rejectUnauthorized: false };
+  } else if (isDirect) {
     const ca = process.env.SUPABASE_CA;
     if (!ca) throw new Error('SUPABASE_CA missing for direct');
-
-    return new Pool({
-      host: ipv4,
-      port: Number(cfg.port || 5432),
-      user: cfg.user || 'postgres',
-      password: cfg.password,
-      database: cfg.database || 'postgres',
-      ssl: { ca },
-      keepAlive: true,
-    });
+    ssl = { ca };
+  } else {
+    ssl = true; // 기타
   }
-
-  // 풀러(필요할 때만)
-  return new Pool({
-    connectionString: url,
-    ssl: true,           // 시스템 CA 신뢰
-    keepAlive: true,
-  });
+  return new Pool({ connectionString: url, ssl, keepAlive: true });
 }
 
-module.exports = { createPoolFromEnv };
+module.exports = { createPool };
+
 app.get('/api/top', async (req, res) => {
   try {
     const { category, limit = 20 } = req.query;
@@ -73,6 +52,7 @@ app.get('/api/top', async (req, res) => {
 const port = process.env.PORT || 3000;
 
 app.listen(port, () => console.log('API on http://localhost:'+port));
+
 
 
 
