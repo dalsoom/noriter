@@ -10,24 +10,24 @@ jobs:
     env:
       DATABASE_POOL_URL: ${{ secrets.DATABASE_POOL_URL }}
       YT_API_KEY: ${{ secrets.YT_API_KEY }}
-      SUPABASE_CA: ${{ secrets.SUPABASE_CA }}         # PEM 방식일 때
-    
+      SUPABASE_CA: ${{ secrets.SUPABASE_CA }}
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: 'npm' }
       - run: npm ci
 
-      - name: Debug env (manual only)
+      - name: Debug (manual only)
         if: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           echo "DB URL len: ${#DATABASE_POOL_URL}"
           node -e "const u=process.env.DATABASE_POOL_URL||''; console.log('DB host:', (u.match(/@([^:/?]+)/)||[])[1]||'EMPTY');"
-          echo "CA len: ${#SUPABASE_CA} ${#SUPABASE_CA_B64}"
+          echo "CA len: ${#SUPABASE_CA}"
 
       - name: DB smoke test
         run: |
-          node -e "const {Pool}=require('pg');const ca=process.env.SUPABASE_CA || (process.env.SUPABASE_CA_B64?Buffer.from(process.env.SUPABASE_CA_B64,'base64').toString('utf8'):undefined);const p=new Pool({connectionString:process.env.DATABASE_POOL_URL, ssl: ca?{ca}:{rejectUnauthorized:false}});(async()=>{try{let r=await p.query('select now()');console.log('DB now:', r.rows[0]);}catch(e){console.error(e);process.exit(1);}finally{await p.end();}})();"
+          node -e "const {Pool}=require('pg');const {parse}=require('pg-connection-string');const url=process.env.DATABASE_POOL_URL;const cfg=parse(url);const h=(cfg.host||url.match(/@([^:/?]+)/)||[])[1]||'';const isPooler=String(h).includes('.pooler.supabase.com');const ca=process.env.SUPABASE_CA;cfg.ssl=isPooler?true:(ca?{ca}:{rejectUnauthorized:false});(async()=>{try{const p=new Pool(cfg);const r=await p.query('select now()');console.log('DB now:',r.rows[0]);await p.end();}catch(e){console.error(e);process.exit(1);}})();"
 
       - name: Run poller
         run: node poll.js
