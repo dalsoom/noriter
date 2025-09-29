@@ -1,23 +1,34 @@
 name: Poll YouTube snapshots
+
 on:
   schedule:
-    - cron: "*/15 * * * *"
-  workflow_dispatch:
+    - cron: "*/15 * * * *"   # 15분마다(UTC)
+  workflow_dispatch:          # 수동 실행 버튼
 
 jobs:
   poll:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    # 모든 step에서 보이도록 시크릿을 job 레벨 env로 주입
     env:
       DATABASE_POOL_URL: ${{ secrets.DATABASE_POOL_URL }}
       YT_API_KEY: ${{ secrets.YT_API_KEY }}
-      SUPABASE_CA: ${{ secrets.SUPABASE_CA }}
+      SUPABASE_CA: ${{ secrets.SUPABASE_CA }}   # PEM 원문(멀티라인). pooler에선 무시됨
 
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: 'npm' }
+        with:
+          node-version: 22
+          cache: npm
+
       - run: npm ci
 
+      # 수동 실행 때만 진단 출력
       - name: Debug (manual only)
         if: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
@@ -25,9 +36,41 @@ jobs:
           node -e "const u=process.env.DATABASE_POOL_URL||''; console.log('DB host:', (u.match(/@([^:/?]+)/)||[])[1]||'EMPTY');"
           echo "CA len: ${#SUPABASE_CA}"
 
+      # 연결 연기(smoke test): pooler면 ssl:true(추가 CA 금지), direct면 SUPABASE_CA 사용
       - name: DB smoke test
         run: |
-          node -e "const {Pool}=require('pg');const {parse}=require('pg-connection-string');const url=process.env.DATABASE_POOL_URL;const cfg=parse(url);const h=(cfg.host||url.match(/@([^:/?]+)/)||[])[1]||'';const isPooler=String(h).includes('.pooler.supabase.com');const ca=process.env.SUPABASE_CA;cfg.ssl=isPooler?true:(ca?{ca}:{rejectUnauthorized:false});(async()=>{try{const p=new Pool(cfg);const r=await p.query('select now()');console.log('DB now:',r.rows[0]);await p.end();}catch(e){console.error(e);process.exit(1);}})();"
+          node - <<'NODE'
+          const { Pool } = require('pg');
+          const { parse } = require('pg-connection-string');
+
+          const url = process.env.DATABASE_POOL_URL;
+          if (!url) { console.error('DATABASE_POOL_URL missing'); process.exit(1); }
+
+          const cfg = parse(url);
+          const host = (cfg.host || '').toLowerCase();
+          const isPooler = host.includes('.pooler.supabase.com');
+          console.log('DB host:', host, 'isPooler:', isPooler);
+
+          let ssl;
+          if (isPooler) {
+            ssl = true; // 시스템 CA 신뢰(추가 CA 지정 금지)
+          } else {
+            const ca = process.env.SUPABASE_CA;          // direct일 때만 의미 있음
+            ssl = ca ? { ca } : { rejectUnauthorized: false }; // (우회는 진단용)
+          }
+
+          (async () => {
+            try {
+              const p = new Pool({ connectionString: url, ssl });
+              const r = await p.query('select now()');
+              console.log('DB now:', r.rows[0]);
+              await p.end();
+            } catch (e) {
+              console.error(e);
+              process.exit(1);
+            }
+          })();
+          NODE
 
       - name: Run poller
         run: node poll.js
