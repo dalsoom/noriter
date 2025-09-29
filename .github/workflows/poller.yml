@@ -1,58 +1,35 @@
 name: Poll YouTube snapshots
-
 on:
   schedule:
-    - cron: "*/15 * * * *"       # 15분마다(UTC)
-  workflow_dispatch:             # 수동 실행 버튼
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
 
 jobs:
   poll:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_POOL_URL: ${{ secrets.DATABASE_POOL_URL }}
+      YT_API_KEY: ${{ secrets.YT_API_KEY }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: 'npm'
-
+        with: { node-version: 22, cache: 'npm' }
       - run: npm ci
 
-      # 1) 인증서 파일 생성 (Secrets -> 파일로)
-      # SUPABASE_CA_B64 (줄바꿈 없는 순수 Base64 본문)을 디코딩하여 파일 재구성
       - name: Write Supabase CA cert
-        run: |
-            # 1. BEGIN 라인 추가 (파일 생성)
-            echo "-----BEGIN CERTIFICATE-----" > prod-ca-2021.crt
-        
-            # 2. Base64 본문을 디코딩하여 파일에 추가
-            echo "${{ secrets.SUPABASE_CA_B64 }}" | base64 --decode >> prod-ca-2021.crt
-        
-            # 3. END 라인 추가
-            echo "-----END CERTIFICATE-----" >> prod-ca-2021.crt
-            
-      # 2) 디버그: 인증서 파일 헤더/푸터 및 크기 확인 (수동 실행 때만)
-      - name: Debug cert header/footer and size (Enhanced)
+        run: printf "%s" "${{ secrets.SUPABASE_CA }}" > prod-ca-2021.crt
+
+      - name: Debug cert header/footer and sizes (manual runs only)
         if: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
-          # || true 를 추가하여 head/tail 명령어 실패 시에도 전체 스크립트 중단 방지
           head -n 2 prod-ca-2021.crt || true
           tail -n 2 prod-ca-2021.crt || true
-          echo "cert size(bytes): $(wc -c < prod-ca-2021.crt)"
-
-      # 3) 디버그: 시크릿 길이만 출력 (값 노출 없음, 수동 실행 때만)
-      - name: Debug secret lengths
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        run: |
           echo "DB URL len: ${#DATABASE_POOL_URL}"
           echo "YT key len: ${#YT_API_KEY}"
-        env:
-          DATABASE_POOL_URL: ${{ secrets.DATABASE_POOL_URL }}
-          YT_API_KEY: ${{ secrets.YT_API_KEY }}
 
-      # 4) 실제 폴러 실행
+      - name: DB smoke test
+        run: |
+          node -e "const {Pool}=require('pg');const fs=require('fs');const p=new Pool({connectionString:process.env.DATABASE_POOL_URL, ssl:{ca:fs.readFileSync('prod-ca-2021.crt','utf8')}});(async()=>{try{let r=await p.query('select now()');console.log(r.rows[0]);}catch(e){console.error(e);process.exit(1);}finally{await p.end();}})();"
+
       - name: Run poller
-        env:
-          DATABASE_POOL_URL: ${{ secrets.DATABASE_POOL_URL }}
-          YT_API_KEY: ${{ secrets.YT_API_KEY }}
         run: node poll.js
