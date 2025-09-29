@@ -14,7 +14,7 @@ jobs:
 
     # 모든 step에서 보이도록 시크릿을 job 레벨 env로 주입
     env:
-      DATABASE_POOL_URL: ${{ secrets.DATABASE_POOL_URL }}
+      DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
       YT_API_KEY: ${{ secrets.YT_API_KEY }}
       SUPABASE_CA: ${{ secrets.SUPABASE_CA }}   # PEM 원문(멀티라인). pooler에선 무시됨
 
@@ -32,8 +32,8 @@ jobs:
       - name: Debug (manual only)
         if: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
-          echo "DB URL len: ${#DATABASE_POOL_URL}"
-          node -e "const u=process.env.DATABASE_POOL_URL||''; console.log('DB host:', (u.match(/@([^:/?]+)/)||[])[1]||'EMPTY');"
+          echo "DB URL len: ${#DATABASE_URL_DIRECT}"
+          node -e "const u=process.env.DATABASE_URL_DIRECT||''; console.log('DB host:', (u.match(/@([^:/?]+)/)||[])[1]||'EMPTY');"
           echo "CA len: ${#SUPABASE_CA}"
 
       # 연결 연기(smoke test): pooler면 ssl:true(추가 CA 금지), direct면 SUPABASE_CA 사용
@@ -43,8 +43,8 @@ jobs:
           const { Pool } = require('pg');
           const { parse } = require('pg-connection-string');
 
-          const url = process.env.DATABASE_POOL_URL;
-          if (!url) { console.error('DATABASE_POOL_URL missing'); process.exit(1); }
+          const url = process.env.DATABASE_URL_DIRECT;
+          if (!url) { console.error('DATABASE_URL_DIRECT missing'); process.exit(1); }
 
           const cfg = parse(url);
           const host = (cfg.host || '').toLowerCase();
