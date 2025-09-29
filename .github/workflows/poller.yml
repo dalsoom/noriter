@@ -20,8 +20,16 @@ jobs:
 
       # 1) 인증서 파일 생성 (Secrets -> 파일로)
       - name: Write Supabase CA cert
-        run: printf "%s" "${{ secrets.SUPABASE_CA }}" > prod-ca-2021.crt
-
+        run: |
+            # 1. BEGIN 라인 추가 (파일 생성)
+            echo "-----BEGIN CERTIFICATE-----" > prod-ca-2021.crt
+    
+            # 2. Base64 본문을 디코딩하여 파일에 추가 (줄바꿈 없이 한 줄인 Secret 사용)
+            echo "${{ secrets.SUPABASE_CA_B64 }}" | base64 --decode >> prod-ca-2021.crt
+    
+            # 3. END 라인 추가
+            echo "-----END CERTIFICATE-----" >> prod-ca-2021.crt
+            
       # 2) 디버그: 인증서 파일 헤더/푸터 및 크기 확인 (수동 실행 때만)
       - name: Debug cert header/footer and size
         if: ${{ github.event_name == 'workflow_dispatch' }}
