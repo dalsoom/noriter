@@ -1,0 +1,10 @@
+# 민감정보/빌드 산출물 제외
+.env
+prod-ca-2021.crt
+*.log
+node_modules/
+dist/
+build/
+.DS_Store
+.vscode/
+.idea/
