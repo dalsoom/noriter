@@ -2,22 +2,20 @@
 require('dotenv').config();
 const { Pool } = require('pg');
 const { parse } = require('pg-connection-string');
-const fs = require('fs');
-
-// (선택) IPv4 우선
-try { require('dns').setDefaultResultOrder('ipv4first'); } catch {}
 
 const connStr = process.env.DATABASE_POOL_URL || process.env.DATABASE_URL;
-console.log('Using host =', connStr.match(/@([^:/?]+)/)?.[1]);
+if (!connStr) { console.error('Missing env: DATABASE_POOL_URL'); process.exit(1); }
 
-// poll.js/seed.js에서 쓰던 CA 파일과 동일해야 합니다
-const ca = fs.readFileSync('./prod-ca-2021.crt', 'utf8');
+const ca =
+  process.env.SUPABASE_CA ||
+  (process.env.SUPABASE_CA_B64
+    ? Buffer.from(process.env.SUPABASE_CA_B64, 'base64').toString('utf8')
+    : undefined);
 
-// poll.js와 동일: 문자열 → 설정 객체로 파싱 후 ssl.ca 주입
-const config = parse(connStr);
-config.ssl = { ca };
+const cfg = parse(connStr);
+cfg.ssl = ca ? { ca } : { rejectUnauthorized: false }; // 운영에선 ca가 들어오도록 세팅하고, 우회는 제거 권장
 
-const pool = new Pool(config);
+const pool = new Pool(cfg);
 
 (async () => {
   try {
@@ -36,4 +34,5 @@ const pool = new Pool(config);
   } finally {
     await pool.end();
   }
+
 })();
