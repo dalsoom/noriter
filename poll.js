@@ -2,17 +2,20 @@
 require('dotenv').config();
 const { Pool } = require('pg');
 const { parse } = require('pg-connection-string');
-const fs = require('fs');
 
 const connStr = process.env.DATABASE_POOL_URL || process.env.DATABASE_URL;
-console.log('Using host =', connStr.match(/@([^:/?]+)/)?.[1]);
+if (!connStr) { console.error('Missing env: DATABASE_POOL_URL'); process.exit(1); }
 
-// Supabase CA 인증서 (seed.js와 동일 파일)
-const ca = fs.readFileSync('./prod-ca-2021.crt', 'utf8');
+const ca =
+  process.env.SUPABASE_CA ||
+  (process.env.SUPABASE_CA_B64
+    ? Buffer.from(process.env.SUPABASE_CA_B64, 'base64').toString('utf8')
+    : undefined);
 
-const config = parse(connStr);
-config.ssl = { ca };
-const pool = new Pool(config);
+const cfg = parse(connStr);
+cfg.ssl = ca ? { ca } : { rejectUnauthorized: false }; // 운영에선 ca가 들어오도록 세팅하고, 우회는 제거 권장
+
+const pool = new Pool(cfg);
 
 const API_KEY = process.env.YT_API_KEY;
 
@@ -92,4 +95,5 @@ if (require.main === module) {
 }
 
 // 다른 파일에서 수동 호출할 수 있게 export 유지
+
 module.exports = { runOnce };
