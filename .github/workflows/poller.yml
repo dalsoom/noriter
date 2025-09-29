@@ -36,12 +36,12 @@ jobs:
           node -e "const u=process.env.DATABASE_URL_DIRECT||''; console.log('DB host:', (u.match(/@([^:/?]+)/)||[])[1]||'EMPTY');"
           echo "CA len: ${#SUPABASE_CA}"
 
-      # Direct(5432) + CA로 스모크 테스트
-      - name: DB smoke test
+      - name: DB smoke test (force IPv4)
         run: |
           node - <<'NODE'
           const { Pool } = require('pg');
           const { parse } = require('pg-connection-string');
+          const dns = require('dns').promises;
 
           const url = process.env.DATABASE_URL_DIRECT;
           if (!url) { console.error('DATABASE_URL_DIRECT missing'); process.exit(1); }
@@ -50,17 +50,30 @@ jobs:
           const host = (cfg.host || '').toLowerCase();
           console.log('DB host:', host);
 
-          const ca = process.env.SUPABASE_CA;
-          if (!ca) { console.error('SUPABASE_CA missing'); process.exit(1); }
-
-          const ssl = { ca };  // Direct는 반드시 CA로 검증
-
+          // 1) A 레코드(IPv4) 직접 해석
           (async () => {
             try {
-              const p = new Pool({ connectionString: url, ssl });
-              const r = await p.query('select now()');
+              const A = await dns.resolve4(host);
+              if (!A || !A.length) throw new Error('No IPv4 A record for ' + host);
+              const ipv4 = A[0];
+              console.log('Use IPv4:', ipv4);
+
+              // 2) Direct + CA로 검증(연결 문자열 대신 개별 필드로 전달)
+              const ca = process.env.SUPABASE_CA;
+              if (!ca) { console.error('SUPABASE_CA missing'); process.exit(1); }
+
+              const pool = new Pool({
+                host: ipv4,
+                port: Number(cfg.port || 5432),
+                user: cfg.user || 'postgres',
+                password: cfg.password,
+                database: cfg.database || 'postgres',
+                ssl: { ca }
+              });
+
+              const r = await pool.query('select now()');
               console.log('DB now:', r.rows[0]);
-              await p.end();
+              await pool.end();
             } catch (e) {
               console.error(e);
               process.exit(1);
