@@ -16,7 +16,7 @@ jobs:
     env:
       DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
       YT_API_KEY: ${{ secrets.YT_API_KEY }}
-      SUPABASE_CA: ${{ secrets.SUPABASE_CA }}   # PEM 원문(멀티라인). pooler에선 무시됨
+      SUPABASE_CA: ${{ secrets.SUPABASE_CA }}
 
     steps:
       - uses: actions/checkout@v4
@@ -36,7 +36,7 @@ jobs:
           node -e "const u=process.env.DATABASE_URL_DIRECT||''; console.log('DB host:', (u.match(/@([^:/?]+)/)||[])[1]||'EMPTY');"
           echo "CA len: ${#SUPABASE_CA}"
 
-      # 연결 연기(smoke test): pooler면 ssl:true(추가 CA 금지), direct면 SUPABASE_CA 사용
+      # Direct(5432) + CA로 스모크 테스트
       - name: DB smoke test
         run: |
           node - <<'NODE'
@@ -48,16 +48,12 @@ jobs:
 
           const cfg = parse(url);
           const host = (cfg.host || '').toLowerCase();
-          const isPooler = host.includes('.pooler.supabase.com');
-          console.log('DB host:', host, 'isPooler:', isPooler);
+          console.log('DB host:', host);
 
-          let ssl;
-          if (isPooler) {
-            ssl = true; // 시스템 CA 신뢰(추가 CA 지정 금지)
-          } else {
-            const ca = process.env.SUPABASE_CA;          // direct일 때만 의미 있음
-            ssl = ca ? { ca } : { rejectUnauthorized: false }; // (우회는 진단용)
-          }
+          const ca = process.env.SUPABASE_CA;
+          if (!ca) { console.error('SUPABASE_CA missing'); process.exit(1); }
+
+          const ssl = { ca };  // Direct는 반드시 CA로 검증
 
           (async () => {
             try {
